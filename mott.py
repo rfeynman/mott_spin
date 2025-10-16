@@ -179,12 +179,12 @@ def main():
     folder_path = '/Users/wange/Coding/Python/ai_spin_measurement/data/mini_mott/'
     
     # Define the energy range (in eV) for the linear fit
-    fit_start_eV = 50
+    fit_start_eV = 10
     fit_end_eV = 70
     
     # 1. Define run numbers to process
     # Examples:
-    run_nums = 1542                  # Single value
+    run_nums = 1242                  # Single value
     # run_nums = [1010, 1011, 1012]    # List of values
     #run_nums = np.arange(1010, 1012) # Range of values (e.g., 1010, 1011)
     
