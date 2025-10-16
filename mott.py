@@ -14,13 +14,13 @@ def readdata(filepath='Run1010.csv'):
         tuple: A tuple containing:
             - energylossmax (float): Maximum energy loss.
             - energyloss_step (float): Step size for energy loss.
-            - photonenergy (float): Photon energy.
+            - photonwavelength (float): Photon wavelength.
             - count_left (pd.DataFrame): DataFrame for the left detector counts.
             - count_right (pd.DataFrame): DataFrame for the right detector counts.
     """
     # 2. Read in metadata from the first row (G1, H1, I1)
     meta_df = pd.read_csv(filepath, header=None, nrows=1)
-    photonenergy = meta_df.iloc[0, 6]
+    photonwavelength = meta_df.iloc[0, 6]
     energylossmax = meta_df.iloc[0, 7]
     energyloss_step = meta_df.iloc[0, 8]
     
@@ -37,9 +37,9 @@ def readdata(filepath='Run1010.csv'):
     count_right = df.iloc[rows_per_detector:].copy().reset_index(drop=True)
     
     # 5. Return the parsed data
-    return energylossmax, energyloss_step, photonenergy, count_left, count_right
+    return energylossmax, energyloss_step, photonwavelength, count_left, count_right
 
-def calculate_and_plot_polarization(count_left, count_right, sherman_function, run_num, fit_start_eV, fit_end_eV, energyloss_step):
+def calculate_and_plot_polarization(count_left, count_right, sherman_function, run_num, fit_start_eV, fit_end_eV, energyloss_step, folder_path, photonwavelength):
     """
     Calculates asymmetry and polarization, saves results to file, and plots the data.
 
@@ -51,6 +51,8 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
         fit_start_eV (float): The starting energy loss for the linear fit.
         fit_end_eV (float): The ending energy loss for the linear fit.
         energyloss_step (float): The energy loss step, for defining the fit range.
+        folder_path (str): The path to save output files.
+        photonwavelength (float): The photon wavelength of the run in nm.
 
     Returns:
         tuple: A tuple containing:
@@ -108,9 +110,11 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     print("\n--- Calculated Asymmetry Results ---")
     print(results.to_string())
     
-    # Save the results to a txt file
-    asymmetry_filename = f'asymmetry_Run{run_num}.txt'
+    # Save the results to a txt file in the specified folder
+    asymmetry_filename = os.path.join(folder_path, f'asymmetry_Run{run_num}.txt')
     with open(asymmetry_filename, 'w') as f:
+        f.write(f"Photon Wavelength: {photonwavelength} nm\n")
+        f.write("="*40 + "\n")
         f.write(results.to_string())
     print(f"Asymmetry results saved to '{asymmetry_filename}'")
 
@@ -148,7 +152,7 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     # Add an empty plot with a label for the polarization
     ax.plot([], [], ' ', label=f'Polarization = {polarization:.2f} %')
     
-    ax.set_title(f'Mott Asymmetry vs. Energy Loss (Run {run_num})', fontsize=16)
+    ax.set_title(f'Mott Asymmetry vs. Energy Loss (Run {run_num}, {photonwavelength} nm)', fontsize=16)
     ax.set_xlabel('Energy Loss (eV)', fontsize=12)
     ax.set_ylabel('Asymmetry (%)', fontsize=12)
     
@@ -158,7 +162,8 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     ax.set_xlim(left=-5)
     
     plt.tight_layout()
-    plot_filename = f'asymmetry_fit_plot_Run{run_num}.png'
+    # Save the plot to the specified folder
+    plot_filename = os.path.join(folder_path, f'asymmetry_fit_plot_Run{run_num}.png')
     plt.savefig(plot_filename, dpi=300)
     print(f"\nPlot has been saved as '{plot_filename}'")
 
@@ -179,7 +184,7 @@ def main():
     
     # 1. Define run numbers to process
     # Examples:
-    run_nums = 1542                 # Single value
+    run_nums = 1542                  # Single value
     # run_nums = [1010, 1011, 1012]    # List of values
     #run_nums = np.arange(1010, 1012) # Range of values (e.g., 1010, 1011)
     
@@ -194,21 +199,22 @@ def main():
         
         try:
             # Read data
-            energylossmax, energyloss_step, photonenergy, count_left, count_right = readdata(filepath)
+            energylossmax, energyloss_step, photonwavelength, count_left, count_right = readdata(filepath)
             
             print("--- Data Loading ---")
             print(f"Successfully loaded data from '{filepath}'")
-            print(f"Photon Energy: {photonenergy} eV")
+            print(f"Photon Wavelength: {photonwavelength} nm")
             print(f"Max Energy Loss: {energylossmax} eV")
             print(f"Energy Loss Step: {energyloss_step} eV")
             
             # Perform calculations and plotting
             polarization, asymmetry_0 = calculate_and_plot_polarization(
                 count_left, count_right, sherman_function, num, 
-                fit_start_eV, fit_end_eV, energyloss_step
+                fit_start_eV, fit_end_eV, energyloss_step, folder_path, photonwavelength
             )
             
             print("\n--- Final Results ---")
+            print(f"Photon Wavelength: {photonwavelength} nm")
             print(f"Extrapolated Asymmetry at 0 eV (Asymmetry_0): {asymmetry_0:.4f}%")
             print(f"Sherman Function: {sherman_function}")
             print(f"Final Calculated Polarization: {polarization:.4f} %")
