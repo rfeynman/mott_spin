@@ -39,7 +39,7 @@ def readdata(filepath='Run1010.csv'):
     # 5. Return the parsed data
     return energylossmax, energyloss_step, photonwavelength, count_left, count_right
 
-def calculate_and_plot_polarization(count_left, count_right, sherman_function, run_num, fit_start_eV, fit_end_eV, energyloss_step, folder_path, photonwavelength):
+def calculate_and_plot_polarization(count_left, count_right, sherman_function, run_num, fit_start_eV, fit_end_eV, energyloss_step, txt_output_path, png_output_path, photonwavelength, fast_measure_ergloss):
     """
     Calculates asymmetry and polarization, saves results to file, and plots the data.
 
@@ -51,13 +51,16 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
         fit_start_eV (float): The starting energy loss for the linear fit.
         fit_end_eV (float): The ending energy loss for the linear fit.
         energyloss_step (float): The energy loss step, for defining the fit range.
-        folder_path (str): The path to save output files.
+        txt_output_path (str): The path to save output text files.
+        png_output_path (str): The path to save output plot files.
         photonwavelength (float): The photon wavelength of the run in nm.
+        fast_measure_ergloss (float): The energy loss for the fast sherman measurement.
 
     Returns:
         tuple: A tuple containing:
             - polarization (float): The final calculated polarization.
             - asymmetry_0 (float): The extrapolated asymmetry at 0 energy loss.
+            - asymmetry_fast_measure_ergloss (float): The asymmetry at the specified fast measurement energy loss.
     """
     # 8. Create removebackground tables
     data_cols = ['X1', 'X2', 'Y1', 'Y2']
@@ -111,7 +114,7 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     print(results.to_string())
     
     # Save the results to a txt file in the specified folder
-    asymmetry_filename = os.path.join(folder_path, f'asymmetry_Run{run_num}.txt')
+    asymmetry_filename = os.path.join(txt_output_path, f'asymmetry_Run{run_num}.txt')
     with open(asymmetry_filename, 'w') as f:
         f.write(f"Photon Wavelength: {photonwavelength} nm\n")
         f.write("="*40 + "\n")
@@ -132,6 +135,9 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     # 13. Calculate the polarization
     polarization = asymmetry_0 / sherman_function
     
+    # Extract asymmetry at the specified fast measurement energy loss
+    asymmetry_fast_measure_ergloss = results.loc[results['Energy loss, eV'] == fast_measure_ergloss, 'asymmetry'].iloc[0]
+
     # --- Plotting ---
     plt.style.use('seaborn-v0_8-whitegrid')
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -163,12 +169,26 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     
     plt.tight_layout()
     # Save the plot to the specified folder
-    plot_filename = os.path.join(folder_path, f'asymmetry_fit_plot_Run{run_num}.png')
+    plot_filename = os.path.join(png_output_path, f'asymmetry_fit_plot_Run{run_num}.png')
     plt.savefig(plot_filename, dpi=300)
+    plt.close(fig) # Close the figure to free up memory
     print(f"\nPlot has been saved as '{plot_filename}'")
 
-    return polarization, asymmetry_0
+    return polarization, asymmetry_0, asymmetry_fast_measure_ergloss
 
+def fast_sherman(polarization, asymmetry_fast_measure):
+    """
+    Calculates the Sherman function at a specific energy loss.
+
+    Args:
+        polarization (float): The calculated polarization of the beam.
+        asymmetry_fast_measure (float): The measured asymmetry at the specified energy loss.
+
+    Returns:
+        float: The calculated Sherman function at the specified energy loss.
+    """
+    sherman_fast = asymmetry_fast_measure / polarization
+    return sherman_fast
 
 def main():
     """
@@ -178,18 +198,29 @@ def main():
     sherman_function = 0.27
     folder_path = '/Users/wange/Coding/Python/ai_spin_measurement/data/mini_mott/'
     
+    # Define output folders
+    txt_output_path = os.path.join(folder_path, 'resulttxt')
+    png_output_path = os.path.join(folder_path, 'resultpng')
+    
+    # Create output directories if they don't exist
+    os.makedirs(txt_output_path, exist_ok=True)
+    os.makedirs(png_output_path, exist_ok=True)
+    
     # Define the energy range (in eV) for the linear fit
-    fit_start_eV = 10
+    fit_start_eV = 50
     fit_end_eV = 70
+    fast_measure_ergloss = 60 # Define the energy for the fast Sherman measurement
     
     # 1. Define run numbers to process
     # Examples:
-    run_nums = 1242                  # Single value
+    # run_nums = 1010                  # Single value
     # run_nums = [1010, 1011, 1012]    # List of values
-    #run_nums = np.arange(1010, 1012) # Range of values (e.g., 1010, 1011)
+    run_nums = np.arange(1010, 1015) # Range of values (e.g., 1010 to 1014)
     
     # Ensure run_nums is always iterable
     run_nums = np.atleast_1d(run_nums)
+    
+    sherman_results = []
     
     for num in run_nums:
         filename = f'Run{num}.csv'
@@ -208,9 +239,10 @@ def main():
             print(f"Energy Loss Step: {energyloss_step} eV")
             
             # Perform calculations and plotting
-            polarization, asymmetry_0 = calculate_and_plot_polarization(
+            polarization, asymmetry_0, asymmetry_fast = calculate_and_plot_polarization(
                 count_left, count_right, sherman_function, num, 
-                fit_start_eV, fit_end_eV, energyloss_step, folder_path, photonwavelength
+                fit_start_eV, fit_end_eV, energyloss_step, txt_output_path, png_output_path, photonwavelength,
+                fast_measure_ergloss
             )
             
             print("\n--- Final Results ---")
@@ -219,11 +251,50 @@ def main():
             print(f"Sherman Function: {sherman_function}")
             print(f"Final Calculated Polarization: {polarization:.4f} %")
             
+            # Calculate and store sherman_fast
+            sherman_fast = fast_sherman(polarization, asymmetry_fast)
+            sherman_results.append({
+                'Run Number': num,
+                'Photon Wavelength (nm)': photonwavelength,
+                f'Sherman @ {fast_measure_ergloss}eV': sherman_fast
+            })
+            
         except FileNotFoundError:
             print(f"Error: The file '{filepath}' was not found. Skipping.")
         except Exception as e:
             print(f"An error occurred during processing for {filename}: {e}")
 
+    # After the loop, process and save the summary results
+    if sherman_results:
+        print("\n\n" + "="*25 + " Summary " + "="*25)
+        summary_df = pd.DataFrame(sherman_results)
+        print(summary_df.to_string(index=False))
+        
+        # Save the summary DataFrame to a text file
+        num_start = run_nums.min()
+        num_end = run_nums.max()
+        summary_filename = os.path.join(txt_output_path, f'fast_sherman_{num_start}_{num_end + 1}.txt')
+        with open(summary_filename, 'w') as f:
+            f.write(summary_df.to_string(index=False))
+        print(f"\nSummary results saved to '{summary_filename}'")
+        
+        # Plot Sherman function vs. Run Number
+        plt.figure(figsize=(10, 6)) # Create a new figure for the summary plot
+        sherman_col_name = f'Sherman @ {fast_measure_ergloss}eV'
+        plt.plot(summary_df['Run Number'], summary_df[sherman_col_name], 'o-', label=sherman_col_name, color='teal')
+        
+        plt.title('Fast Sherman Function vs. Run Number', fontsize=16)
+        plt.xlabel('Run Number', fontsize=12)
+        plt.ylabel(f'Sherman Function @ {fast_measure_ergloss} eV', fontsize=12)
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        
+        summary_plot_filename = os.path.join(png_output_path, f'sherman_vs_run_number_{num_start}_{num_end + 1}.png')
+        plt.savefig(summary_plot_filename, dpi=300)
+        plt.close() # Close the summary plot figure
+        print(f"Summary plot saved as '{summary_plot_filename}'")
+
+
 if __name__ == "__main__":
     main()
-
