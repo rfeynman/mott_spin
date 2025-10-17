@@ -59,33 +59,23 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     Returns:
         tuple: A tuple containing:
             - polarization (float): The final calculated polarization.
-            - delta_polarization (float): The uncertainty in the polarization.
             - asymmetry_0 (float): The extrapolated asymmetry at 0 energy loss.
             - asymmetry_fast_measure_ergloss (float): The asymmetry at the specified fast measurement energy loss.
     """
-    # --- Error Propagation Setup ---
-    # Convert percentage error to absolute error for each count
-    count_cols = ['X1', 'X2', 'Y1', 'Y2']
-    for df in [count_left, count_right]:
-        for col in count_cols:
-            df[f'delta_{col}'] = df[col] * df['Error'] / 100
-
-    # Get background counts and their errors
-    background_left = count_left.loc[0]
-    background_right = count_right.loc[0]
+    # 8. Create removebackground tables
+    data_cols = ['X1', 'X2', 'Y1', 'Y2']
+    
+    # Get background counts (where energy loss is 0)
+    background_left = count_left.loc[0, data_cols]
+    background_right = count_right.loc[0, data_cols]
     
     removebackground_left = count_left.copy()
     removebackground_right = count_right.copy()
     
-    # Subtract background and propagate errors
-    for col in count_cols:
-        # Subtract counts
+    # Subtract background from all other data points
+    for col in data_cols:
         removebackground_left[col] = removebackground_left[col] - background_left[col]
         removebackground_right[col] = removebackground_right[col] - background_right[col]
-
-        # Propagate errors for background subtraction (add errors in quadrature)
-        removebackground_left[f'delta_{col}_prop'] = np.sqrt(removebackground_left[f'delta_{col}']**2 + background_left[f'delta_{col}']**2)
-        removebackground_right[f'delta_{col}_prop'] = np.sqrt(removebackground_right[f'delta_{col}']**2 + background_right[f'delta_{col}']**2)
         
     # We perform calculations on data where energy loss is not zero
     calc_df_left = removebackground_left.iloc[1:].reset_index(drop=True)
@@ -95,41 +85,27 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     results = pd.DataFrame()
     results['Energy loss, eV'] = calc_df_left['Energy loss, eV']
 
-    # 9. Calculate asymmetry and its error for X and Y directions
+    # 9. Calculate asymmetry for X and Y directions
     with np.errstate(divide='ignore', invalid='ignore'):
-        # --- X Asymmetry ---
         term_x = np.sqrt(
-            (calc_df_left['X1'] * calc_df_right['X2']) / 
+            calc_df_left['X1'] * calc_df_right['X2'] / 
             (calc_df_left['X2'] * calc_df_right['X1'])
         )
         results['asymmetry_x'] = (term_x - 1) / (term_x + 1)
-        
-        # Propagate error for X
-        rel_err_sq_x = (calc_df_left['delta_X1_prop']/calc_df_left['X1'])**2 + (calc_df_right['delta_X2_prop']/calc_df_right['X2'])**2 + \
-                       (calc_df_left['delta_X2_prop']/calc_df_left['X2'])**2 + (calc_df_right['delta_X1_prop']/calc_df_right['X1'])**2
-        delta_term_x = 0.5 * term_x * np.sqrt(rel_err_sq_x)
-        results['delta_asymmetry_x'] = np.abs(2 / (term_x + 1)**2) * delta_term_x
 
-        # --- Y Asymmetry ---
         term_y = np.sqrt(
-            (calc_df_left['Y1'] * calc_df_right['Y2']) / 
+            calc_df_left['Y1'] * calc_df_right['Y2'] / 
             (calc_df_left['Y2'] * calc_df_right['Y1'])
         )
         results['asymmetry_y'] = (term_y - 1) / (term_y + 1)
-        
-        # Propagate error for Y
-        rel_err_sq_y = (calc_df_left['delta_Y1_prop']/calc_df_left['Y1'])**2 + (calc_df_right['delta_Y2_prop']/calc_df_right['Y2'])**2 + \
-                       (calc_df_left['delta_Y2_prop']/calc_df_left['Y2'])**2 + (calc_df_right['delta_Y1_prop']/calc_df_right['Y1'])**2
-        delta_term_y = 0.5 * term_y * np.sqrt(rel_err_sq_y)
-        results['delta_asymmetry_y'] = np.abs(2 / (term_y + 1)**2) * delta_term_y
     
-    # 11. Calculate total asymmetry and propagate its error
-    results['asymmetry'] = 100 * np.sqrt(results['asymmetry_x']**2 + results['asymmetry_y']**2)
-    
-    # Propagate error for total asymmetry
-    ax, ay = results['asymmetry_x'], results['asymmetry_y']
-    dax, day = results['delta_asymmetry_x'], results['delta_asymmetry_y']
-    results['asymmetry_error'] = (100 / np.sqrt(ax**2 + ay**2)) * np.sqrt((ax*dax)**2 + (ay*day)**2)
+    # 10. Calculate spin direction
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ratio = np.abs(results['asymmetry_x'] / results['asymmetry_y'])
+        results['spindirection'] = np.arctan(1 / ratio)
+
+    # 11. Calculate total asymmetry
+    results['asymmetry'] = np.abs(results['asymmetry_y'] / np.sin(results['spindirection'])) * 100
     
     results.replace([np.inf, -np.inf], np.nan, inplace=True)
     results.dropna(inplace=True)
@@ -137,35 +113,27 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     print("\n--- Calculated Asymmetry Results ---")
     print(results.to_string())
     
-    # 12. Fit and find asymmetry at energy loss = 0 using a weighted fit
-    fit_range = np.arange(fit_start_eV, fit_end_eV + energyloss_step, energyloss_step)
-    fit_points = results[results['Energy loss, eV'].isin(fit_range)]
-    x_fit = fit_points['Energy loss, eV']
-    y_fit = fit_points['asymmetry']
-    y_err_fit = fit_points['asymmetry_error']
-    
-    # Perform weighted linear fit to get parameters and their covariance matrix
-    p, V = np.polyfit(x_fit, y_fit, 1, w=1/y_err_fit**2, cov=True)
-    slope, intercept = p
-    delta_slope, delta_intercept = np.sqrt(np.diag(V))
-    
-    asymmetry_0 = intercept
-    delta_asymmetry_0 = delta_intercept
-
-    # 13. Calculate the polarization and its error
-    polarization = asymmetry_0 / sherman_function
-    delta_polarization = delta_asymmetry_0 / sherman_function
-    
     # Save the results to a txt file in the specified folder
     asymmetry_filename = os.path.join(txt_output_path, f'asymmetry_Run{run_num}.txt')
     with open(asymmetry_filename, 'w') as f:
         f.write(f"Photon Wavelength: {photonwavelength} nm\n")
-        f.write(f"Polarization: {polarization:.4f} +/- {delta_polarization:.4f} %\n")
-        f.write(f"Asymmetry at 0 eV: {asymmetry_0:.4f} +/- {delta_asymmetry_0:.4f} %\n")
-        f.write(f"Linear Fit Function: y = ({slope:.4f} +/- {delta_slope:.4f})x + ({intercept:.4f} +/- {delta_intercept:.4f})\n")
         f.write("="*40 + "\n")
-        f.write(results[['Energy loss, eV', 'asymmetry', 'asymmetry_error']].to_string())
+        f.write(results.to_string())
     print(f"Asymmetry results saved to '{asymmetry_filename}'")
+
+    # 12. Fit and find asymmetry at energy loss = 0
+    # Create the fitting range dynamically
+    fit_range = np.arange(fit_start_eV, fit_end_eV + energyloss_step, energyloss_step)
+    fit_points = results[results['Energy loss, eV'].isin(fit_range)]
+    x_fit = fit_points['Energy loss, eV']
+    y_fit = fit_points['asymmetry']
+    
+    # Perform linear fit (degree 1 polynomial)
+    slope, intercept = np.polyfit(x_fit, y_fit, 1)
+    asymmetry_0 = intercept
+
+    # 13. Calculate the polarization
+    polarization = asymmetry_0 / sherman_function
     
     # Extract asymmetry at the specified fast measurement energy loss
     asymmetry_fast_measure_ergloss = results.loc[results['Energy loss, eV'] == fast_measure_ergloss, 'asymmetry'].iloc[0]
@@ -174,22 +142,21 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     plt.style.use('seaborn-v0_8-whitegrid')
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Plot asymmetry with error bars
-    ax.errorbar(results['Energy loss, eV'], results['asymmetry'], yerr=results['asymmetry_error'], 
-                fmt='o', label='Calculated Asymmetry', color='royalblue', alpha=0.7, capsize=3)
+    ax.plot(results['Energy loss, eV'], results['asymmetry'], 'o', 
+            label='Calculated Asymmetry', color='royalblue', alpha=0.7)
     
     ax.plot(x_fit, y_fit, 'o', label=f'Points for Fit ({fit_start_eV}-{fit_end_eV} eV)', 
-            color='red', markersize=10, zorder=5)
+            color='red', markersize=10)
     
     x_line = np.array([0, results['Energy loss, eV'].max()])
     y_line = slope * x_line + intercept
     ax.plot(x_line, y_line, '--', color='black', label=f'Linear Fit (y={slope:.4f}x + {intercept:.2f})')
     
     ax.plot(0, asymmetry_0, 'X', color='darkorange', markersize=12, 
-            label=f'Asymmetry at 0 eV = {asymmetry_0:.2f} \u00B1 {delta_asymmetry_0:.2f}%')
+            label=f'Asymmetry at 0 eV = {asymmetry_0:.2f}%')
     
     # Add an empty plot with a label for the polarization
-    ax.plot([], [], ' ', label=f'Polarization = {polarization:.2f} \u00B1 {delta_polarization:.2f} %')
+    ax.plot([], [], ' ', label=f'Polarization = {polarization:.2f} %')
     
     ax.set_title(f'Mott Asymmetry vs. Energy Loss (Run {run_num}, {photonwavelength} nm)', fontsize=16)
     ax.set_xlabel('Energy Loss (eV)', fontsize=12)
@@ -207,7 +174,7 @@ def calculate_and_plot_polarization(count_left, count_right, sherman_function, r
     plt.close(fig) # Close the figure to free up memory
     print(f"\nPlot has been saved as '{plot_filename}'")
 
-    return polarization, delta_polarization, asymmetry_0, asymmetry_fast_measure_ergloss
+    return polarization, asymmetry_0, asymmetry_fast_measure_ergloss
 
 def fast_sherman(polarization, asymmetry_fast_measure):
     """
@@ -301,7 +268,7 @@ def compare_fast_slow(test_run_nums, average_fast_sherman, sherman_function, fol
         try:
             energylossmax, energyloss_step, photonwavelength, count_left, count_right = readdata(filepath)
             
-            polarization_slow, delta_polarization_slow, _, asymmetry_fast = calculate_and_plot_polarization(
+            polarization_slow, _, asymmetry_fast = calculate_and_plot_polarization(
                 count_left, count_right, sherman_function, f"{num}_test", 
                 fit_start_eV, fit_end_eV, energyloss_step, txt_output_path, png_output_path, photonwavelength,
                 fast_measure_ergloss
@@ -313,7 +280,6 @@ def compare_fast_slow(test_run_nums, average_fast_sherman, sherman_function, fol
                 'run_number': num,
                 'photonwavelength': photonwavelength,
                 'polarization_slow': polarization_slow,
-                'delta_polarization_slow': delta_polarization_slow,
                 'polarization_fast': polarization_fast,
                 'sherman_function': sherman_function,
                 'average_fast_sherman': average_fast_sherman
@@ -358,9 +324,7 @@ def compare_fast_slow(test_run_nums, average_fast_sherman, sherman_function, fol
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
 
     # --- Plot 1: Polarization vs Run Number ---
-    ax1.errorbar(slow_fast_comparison_df['run_number'], slow_fast_comparison_df['polarization_slow'], 
-                 yerr=slow_fast_comparison_df['delta_polarization_slow'], fmt='o', label='Polarization Slow (Full Fit)', 
-                 color='crimson', capsize=3)
+    ax1.plot(slow_fast_comparison_df['run_number'], slow_fast_comparison_df['polarization_slow'], 'o', label='Polarization Slow (Full Fit)', color='crimson')
     ax1.plot(slow_fast_comparison_df['run_number'], slow_fast_comparison_df['polarization_fast'], 's', label=f'Polarization Fast (@{fast_measure_ergloss}eV)', color='dodgerblue')
     
     # Add extra info to legend
@@ -474,7 +438,7 @@ def main():
                 print(f"Energy Loss Step: {energyloss_step} eV")
                 
                 # Perform calculations and plotting
-                polarization, delta_polarization, asymmetry_0, asymmetry_fast = calculate_and_plot_polarization(
+                polarization, asymmetry_0, asymmetry_fast = calculate_and_plot_polarization(
                     count_left, count_right, sherman_function, num, 
                     fit_start_eV, fit_end_eV, energyloss_step, txt_output_path, png_output_path, photonwavelength,
                     fast_measure_ergloss
@@ -484,7 +448,7 @@ def main():
                 print(f"Photon Wavelength: {photonwavelength} nm")
                 print(f"Extrapolated Asymmetry at 0 eV (Asymmetry_0): {asymmetry_0:.4f}%")
                 print(f"Sherman Function: {sherman_function}")
-                print(f"Final Calculated Polarization: {polarization:.4f} +/- {delta_polarization:.4f} %")
+                print(f"Final Calculated Polarization: {polarization:.4f} %")
                 
                 # Calculate and store sherman_fast
                 sherman_fast = fast_sherman(polarization, asymmetry_fast)
