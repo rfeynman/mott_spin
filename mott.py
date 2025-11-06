@@ -578,49 +578,57 @@ def eva_train_data(run_nums, sherman_function, folder_path, txt_output_path, png
             # --- Generate Plot for Energy Scan ---
             if not scan_df.empty:
                 print(f"Generating energy scan summary plot...")
-                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(22, 8))
-                plt.subplots_adjust(wspace=0.45)
+                # Change layout to 1 row, 3 columns, and increase total width
+                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(38, 8))
+                # Adjust spacing
+                plt.subplots_adjust(wspace=0.5)
 
                 # --- Left Subplot: Sherman vs. Run Number for different energies ---
                 pivot_df = scan_df.pivot(index='Run Number', columns='fast_measure_ergloss', values='sherman_fast')
                 
-                # Use a color map
-                colors = plt.cm.jet(np.linspace(0, 1, len(pivot_df.columns)))
+                # Use a color map with more distinct colors (tab20)
+                num_colors = len(pivot_df.columns)
+                colors = plt.cm.tab20.colors # Get the discrete color tuple
                 
-                for i, (erg, color) in enumerate(zip(pivot_df.columns, colors)):
-                    ax1.scatter(pivot_df.index, pivot_df[erg], label=f'{erg} eV', color=color, s=5, alpha=0.7)
+                for i, erg in enumerate(pivot_df.columns):
+                    ax1.scatter(pivot_df.index, pivot_df[erg], label=f'{erg} eV', 
+                                color=colors[i % len(colors)], s=5, alpha=0.7)
                 
                 ax1.set_title('Sherman Function vs. Run Number (Training Data)', fontsize=14)
                 ax1.set_xlabel('Run Number', fontsize=12)
                 ax1.set_ylabel('Fast Sherman Function (S_eff)', fontsize=12)
-                ax1.legend(title="Energy Loss", markerscale=4, loc='center left', bbox_to_anchor=(1.02, 0.5))
+                # Move legend outside the plot and add a box
+                ax1.legend(title="Energy Loss", markerscale=4, loc='center left', 
+                           bbox_to_anchor=(1.02, 0.5), facecolor='white', edgecolor='black')
                 ax1.grid(True)
 
-                # --- Right Subplot: Average Sherman vs. Energy Loss ---
-                # Group by energy and calculate mean and SEM
+                # --- Middle Subplot (ax2): Average Sherman vs. Energy Loss (SEM Error) ---
+                # Group by energy and calculate mean, SEM, min, and max
                 avg_scan_df = scan_df.groupby('fast_measure_ergloss')['sherman_fast'].agg(
                     mean='mean',
-                    sem=lambda x: x.std() / np.sqrt(x.count())
-                ).reset_index()
+                    sem=lambda x: x.std(ddof=1) / np.sqrt(x.count()), # ddof=1 for sample std dev
+                    min='min',
+                    max='max'
+                ).reset_index().dropna() # Dropna in case of single-point groups (std is NaN)
 
                 # Main plot on ax2
                 ax2.errorbar(avg_scan_df['fast_measure_ergloss'], avg_scan_df['mean'], yerr=avg_scan_df['sem'],
-                             fmt='o', capsize=5, label='Mean S_eff (SEM)')
+                             fmt='o', capsize=5, label='Mean S_eff (SEM)', color='C0')
                 
-                ax2.set_title('Average Sherman Function vs. Energy Loss', fontsize=14)
+                ax2.set_title('Average Sherman Function vs. Energy Loss (SEM)', fontsize=14)
                 ax2.set_xlabel('Energy Loss (eV)', fontsize=12)
                 ax2.set_ylabel('Average Fast Sherman Function (S_eff)', fontsize=12, color='C0')
                 ax2.tick_params(axis='y', labelcolor='C0')
                 ax2.grid(True)
                 
-                # Create a twin axis
+                # Create a twin axis for ax2
                 ax2_twin = ax2.twinx()
                 
                 # Calculate Error Bar Length (2 * SEM)
-                error_bar_length = 2 * avg_scan_df['sem']
+                error_bar_length_sem = 2 * avg_scan_df['sem']
                 
                 # Plot Error Bar Length on twin axis
-                ax2_twin.plot(avg_scan_df['fast_measure_ergloss'], error_bar_length, 'r--', label='Error Bar Length (2*SEM)')
+                ax2_twin.plot(avg_scan_df['fast_measure_ergloss'], error_bar_length_sem, 'r--', label='Error Bar Length (2*SEM)')
                 
                 ax2_twin.set_ylabel('Error Bar Length (2*SEM)', color='r', fontsize=12)
                 ax2_twin.tick_params(axis='y', labelcolor='r')
@@ -629,8 +637,43 @@ def eva_train_data(run_nums, sherman_function, folder_path, txt_output_path, png
                 # Combine legends from both axes
                 lines, labels = ax2.get_legend_handles_labels()
                 lines2, labels2 = ax2_twin.get_legend_handles_labels()
-                ax2.legend(lines + lines2, labels + labels2, loc='best')
+                ax2.legend(lines + lines2, labels + labels2, loc='best', facecolor='white', edgecolor='black')
                 
+                # --- Right Subplot (ax3): Average Sherman vs. Energy Loss (Min/Max Error) ---
+                
+                # Calculate error bar range (distance from mean)
+                y_err_lower = avg_scan_df['mean'] - avg_scan_df['min']
+                y_err_upper = avg_scan_df['max'] - avg_scan_df['mean']
+                y_err_minmax = [y_err_lower, y_err_upper]
+
+                # Main plot on ax3
+                ax3.errorbar(avg_scan_df['fast_measure_ergloss'], avg_scan_df['mean'], yerr=y_err_minmax,
+                             fmt='o', capsize=5, label='Mean S_eff (Min/Max Range)', color='C0')
+                
+                ax3.set_title('Average Sherman Function vs. Energy Loss (Min/Max)', fontsize=14)
+                ax3.set_xlabel('Energy Loss (eV)', fontsize=12)
+                ax3.set_ylabel('Average Fast Sherman Function (S_eff)', fontsize=12, color='C0')
+                ax3.tick_params(axis='y', labelcolor='C0')
+                ax3.grid(True)
+                
+                # Create a twin axis for ax3
+                ax3_twin = ax3.twinx()
+                
+                # Calculate Error Bar Length (Max - Min)
+                error_bar_length_minmax = avg_scan_df['max'] - avg_scan_df['min']
+                
+                # Plot Error Bar Length on twin axis
+                ax3_twin.plot(avg_scan_df['fast_measure_ergloss'], error_bar_length_minmax, 'r--', label='Error Bar Length (Max-Min)')
+                
+                ax3_twin.set_ylabel('Error Bar Length (Max-Min)', color='r', fontsize=12)
+                ax3_twin.tick_params(axis='y', labelcolor='r')
+                ax3_twin.grid(False)
+                
+                # Combine legends from both axes
+                lines, labels = ax3.get_legend_handles_labels()
+                lines2, labels2 = ax3_twin.get_legend_handles_labels()
+                ax3.legend(lines + lines2, labels + labels2, loc='best', facecolor='white', edgecolor='black')
+
                 # Save the figure
                 scan_plot_filename = os.path.join(png_output_path, f'sherman_scan_analysis_{num_start}_{num_end + 1}.png')
                 plt.savefig(scan_plot_filename, dpi=300, bbox_inches='tight')
@@ -692,7 +735,7 @@ def main():
     
     # 2. Define a range of energies to scan for a detailed sherman report
     # Set to None to disable this feature
-    fast_measure_ergloss_scan = None #np.arange(20, 170, 10) # Scans 20, 30, ..., 80 eV
+    fast_measure_ergloss_scan = np.arange(20, 170, 10) # Scans 20, 30, ..., 80 eV
     
     # 3. Define run numbers for calibration
     run_nums = np.arange(790, 1200)
